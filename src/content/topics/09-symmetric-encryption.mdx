@@ -1,0 +1,86 @@
+---
+title: "Symmetric Encryption"
+category: "cryptography"
+order: 1
+summary: "One shared key to encrypt and decrypt — AES-GCM and ChaCha20-Poly1305, why the nonce must never repeat, why you need authenticated encryption, and where the key should live."
+tags: ["aes", "aes-gcm", "chacha20", "nonce", "iv", "authenticated-encryption", "aead", "ecb", "envelope-encryption", "kms", "kdf"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import AesGcmDiagram from "../../components/diagrams/AesGcmDiagram.tsx";
+
+**Symmetric** encryption uses the same secret key to encrypt and decrypt. It's fast (AES runs at several GB/s with CPU instructions built for it), so it's what actually encrypts bulk data everywhere: disks, database columns, backups, and every byte of a TLS connection after the handshake.
+
+<FigurePanel number={1} caption="AES-256-GCM, live — encrypt, re-encrypt, tamper, decrypt">
+  <AesGcmDiagram client:visible />
+</FigurePanel>
+
+## The pieces
+
+| Piece | What it is | Secret? |
+| --- | --- | --- |
+| **Key** | 128 or 256 random bits. The only secret. | Yes |
+| **Nonce / IV** | A per-message unique value (12 bytes for GCM). Makes identical plaintexts encrypt differently. | No — sent alongside the ciphertext |
+| **Ciphertext** | The encrypted data, same length as the plaintext. | No |
+| **Auth tag** | 16 bytes that prove the ciphertext (and any "associated data") wasn't modified. | No |
+| **Associated data (AAD)** | Optional unencrypted context bound to the ciphertext — e.g. the row ID — so a ciphertext can't be copied to another row. | No |
+
+What you store: `nonce ‖ ciphertext ‖ tag` (plus a key ID if you rotate keys).
+
+## Use authenticated encryption (AEAD)
+
+There are two modern choices, and you should pick one of them rather than assembling primitives yourself:
+
+- **AES-256-GCM** — the default. Hardware-accelerated almost everywhere.
+- **ChaCha20-Poly1305** — equally secure, faster on devices without AES instructions (older phones). Used in TLS, WireGuard, SSH.
+
+Both are **AEAD** (Authenticated Encryption with Associated Data): they encrypt *and* produce a tag, and decryption fails outright if a single bit was changed. Unauthenticated modes like AES-CBC or AES-CTR will happily decrypt tampered data into attacker-influenced garbage, and that has led to real attacks (padding oracles, bit-flipping a `role=user` into `role=admin`).
+
+```python
+# pip install cryptography
+import os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+key = AESGCM.generate_key(bit_length=256)    # store in a KMS/secrets manager, not in code
+aes = AESGCM(key)
+
+nonce = os.urandom(12)                         # NEW nonce for every encryption
+ct = aes.encrypt(nonce, b"4111 1111 1111 1111", b"user:42")   # AAD binds it to this user
+stored = nonce + ct                            # ct already includes the 16-byte tag
+
+pt = aes.decrypt(stored[:12], stored[12:], b"user:42")         # raises InvalidTag if tampered
+```
+
+## The nonce rule
+
+<Callout variant="warning" title="Never reuse a nonce with the same key">
+For AES-GCM, encrypting two messages with the same key **and** nonce is catastrophic: XORing the two ciphertexts cancels the keystream and leaks the XOR of the plaintexts, and it lets an attacker forge auth tags for that key. Use a fresh random 12-byte nonce per message (safe up to ~2³² messages per key — rotate keys well before that), or a counter you can guarantee never repeats. If you can't guarantee either, use **AES-GCM-SIV** or **XChaCha20-Poly1305** (24-byte nonces, safe to generate randomly forever).
+</Callout>
+
+<Callout variant="warning" title="Never use ECB mode">
+ECB encrypts each 16-byte block independently, so identical plaintext blocks produce identical ciphertext blocks — patterns survive encryption (the famous "ECB penguin" image is still recognizable after encryption). Some libraries default to ECB if you don't specify a mode (`Cipher.getInstance("AES")` in Java). Always specify `AES/GCM/NoPadding`.
+</Callout>
+
+## Where keys come from
+
+- **Random keys:** generate from a CSPRNG (`os.urandom`, `crypto.randomBytes`, `SecureRandom`). Never `Math.random()` or `random.random()`.
+- **From a password:** you can't use a password as a key directly (too short, wrong format). Run it through a password KDF — Argon2id, scrypt, or PBKDF2 — with a salt. That's how password managers and encrypted ZIPs derive their keys.
+- **From another key:** use **HKDF** to derive separate keys for separate purposes (`encryption`, `mac`, `tenant-42`) from one master secret.
+
+## Envelope encryption: where the key lives
+
+The hard part of encryption is never the algorithm — it's protecting the key. If the key sits in the same database as the ciphertext, the encryption accomplishes nothing.
+
+**Envelope encryption** is the standard pattern (AWS KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault):
+
+1. A **key-encryption key (KEK)** lives in a KMS/HSM and never leaves it.
+2. For each record or file, generate a random **data key (DEK)**, encrypt the data with it locally.
+3. Ask the KMS to encrypt the DEK with the KEK. Store the **encrypted DEK** next to the ciphertext; discard the plaintext DEK.
+4. To decrypt: send the encrypted DEK to the KMS (an authenticated, audited, rate-limited call), get the DEK back, decrypt locally.
+
+You get fast local encryption of large data, a key that can't be exfiltrated, an audit log of every decryption, and cheap **key rotation** — rotating the KEK only means re-encrypting the small DEKs, not all the data.
+
+<Callout variant="example" title="Encryption you already rely on">
+**At rest:** S3/EBS/RDS default encryption (AES-256 + KMS envelope), FileVault/BitLocker, Postgres `pgcrypto` for column-level encryption. **In transit:** TLS uses AES-GCM or ChaCha20-Poly1305 for the connection, with a key agreed via public-key crypto. **End-to-end:** Signal and WhatsApp use AES/ChaCha with keys that ratchet forward on every message.
+</Callout>

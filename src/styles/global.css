@@ -1,0 +1,252 @@
+@import "@fontsource/source-serif-4/400.css";
+@import "@fontsource/source-serif-4/600.css";
+@import "@fontsource/source-serif-4/600-italic.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-reading);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-serif);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+  margin: 0 0 var(--space-4);
+  font-weight: 600;
+}
+
+h1 {
+  font-size: var(--text-3xl);
+}
+
+h2 {
+  font-size: var(--text-2xl);
+  margin-top: var(--space-12);
+}
+
+h3 {
+  font-size: var(--text-xl);
+  margin-top: var(--space-8);
+}
+
+p {
+  margin: 0 0 var(--space-4);
+}
+
+.prose {
+  font-family: var(--font-serif);
+}
+
+.prose > p,
+.prose > ul,
+.prose > ol,
+.prose > h1,
+.prose > h2,
+.prose > h3,
+.prose > h4 {
+  max-width: var(--max-width-prose);
+}
+
+.prose ul,
+.prose ol {
+  margin: 0 0 var(--space-4);
+  padding-left: 1.4em;
+}
+
+.prose li {
+  margin-bottom: var(--space-2);
+}
+
+.prose table {
+  width: 100%;
+  max-width: var(--max-width-prose);
+  border-collapse: collapse;
+  margin: var(--space-6) 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  display: block;
+  overflow-x: auto;
+}
+
+.prose thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text);
+  border-bottom: 2px solid var(--color-border);
+}
+
+.prose th,
+.prose td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.prose tbody tr:last-child td {
+  border-bottom: none;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  text-decoration: underline;
+  color: var(--color-accent-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Inline code */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.35em;
+}
+
+/* Fenced code blocks (Shiki-rendered) */
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  background: var(--diagram-bg) !important;
+  color: var(--diagram-text);
+  border: 1px solid var(--diagram-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-6);
+  margin: var(--space-6) 0;
+  overflow-x: auto;
+  box-shadow: var(--shadow-sm);
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+/* Diagram controls — shared across interactive diagram islands */
+.diagram-toggle-group {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-family: var(--font-sans);
+}
+
+.diagram-toggle {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--diagram-text-muted);
+  background: transparent;
+  border: 1px solid var(--diagram-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.diagram-toggle:hover {
+  border-color: var(--color-accent);
+  color: var(--diagram-text);
+}
+
+.diagram-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.diagram-toggle--active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--diagram-bg);
+  font-weight: 500;
+}
+
+.diagram-toggle--active:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+  color: var(--diagram-bg);
+}
+
+.diagram-legend {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--diagram-text-muted);
+}
+
+.diagram-legend__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.diagram-legend__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.diagram-toggle-group {
+  flex-wrap: wrap;
+}
+
+/* Inputs inside the dark diagram panel */
+.figure-panel textarea:focus,
+.figure-panel input:focus,
+.figure-panel select:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.figure-panel input[type="range"] {
+  accent-color: var(--color-accent);
+  width: 100%;
+}

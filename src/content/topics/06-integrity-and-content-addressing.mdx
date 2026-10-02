@@ -1,0 +1,81 @@
+---
+title: "Integrity, Dedup & Content Addressing"
+category: "practical-hashing"
+order: 3
+summary: "Using a hash as proof that data hasn't changed — checksums, ETags, deduplication, Merkle trees, and systems like git and Docker where the hash of the content is its name."
+tags: ["checksum", "integrity", "etag", "deduplication", "merkle-tree", "content-addressing", "git", "subresource-integrity"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import MerkleDiagram from "../../components/diagrams/MerkleDiagram.tsx";
+
+If two pieces of data have the same cryptographic hash, you can treat them as identical. That one idea gives you integrity checks, deduplication, efficient sync, and an entire style of storage where data is named by its own fingerprint.
+
+## Checksums and download verification
+
+Publish the SHA-256 of a file; anyone can recompute it on their copy and compare:
+
+```bash
+shasum -a 256 node-v22.12.0.tar.gz        # macOS  (sha256sum on Linux)
+# compare against the SHASUMS256.txt published by the project
+```
+
+<Callout variant="warning" title="A checksum only helps if it comes from somewhere you trust">
+If an attacker can replace the download, they can replace the checksum on the same page too. A hash proves **integrity** (the bytes match *this* fingerprint), not **authenticity** (*who* produced it). For authenticity, the checksum file itself must be **signed** (GPG, Sigstore) or served from a separate trusted channel. That's what signatures add — see [Public-Key Cryptography](../10-public-key-cryptography/).
+</Callout>
+
+**Subresource Integrity** applies the same idea to scripts loaded from a CDN — the browser refuses to run the file if its hash doesn't match:
+
+```html
+<script src="https://cdn.example.com/lib.min.js"
+        integrity="sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC"
+        crossorigin="anonymous"></script>
+```
+
+## ETags and caching
+
+An HTTP **ETag** is a fingerprint of a response body (often a hash). The client sends it back as `If-None-Match`; if the server's current hash is the same, it replies `304 Not Modified` with no body. Same idea in build tools: content-hashed filenames like `app.3f9a0c1e.js` can be cached *forever*, because any change to the file produces a new name.
+
+## Deduplication
+
+Store each blob under its hash. Before uploading, compute the hash and ask "do you already have this?" — if yes, skip the upload entirely.
+
+- **Dropbox / backup tools** split files into chunks (often *content-defined* chunks, so inserting a byte doesn't shift every chunk boundary), hash each chunk, and only upload chunks the server hasn't seen.
+- **Docker layers** are stored by `sha256:` digest, so ten images built on the same base share one copy.
+- **Email/attachment systems** store one copy of an attachment sent to 5,000 recipients.
+
+For dedup, use a **cryptographic** hash with at least 128 bits (SHA-256 is standard). With a weak hash, an attacker can craft a file whose hash collides with someone else's and cause theirs to be silently "deduplicated" away.
+
+## Content addressing
+
+In a content-addressed system the **name of a thing is the hash of its content**. That gives three properties for free: identical content is automatically stored once, any reference is self-verifying (re-hash what you received and check it matches the name), and content can never change under a name.
+
+**Git** is the canonical example. Every file (blob), directory (tree), and commit is stored at `hash(type + size + content)`:
+
+```bash
+$ printf 'hello\n' | git hash-object --stdin
+ce013625030ba8dba906f756967f9e9ca394464a
+```
+
+A commit's hash covers its tree hash and its parent's hash, so a commit ID fingerprints the *entire history* behind it — change one byte in an old file and every descendant commit ID changes. That's why rewriting history (rebase) creates new IDs.
+
+Also content-addressed: Docker/OCI image digests, IPFS, Nix store paths, Bazel's remote cache, and every blockchain.
+
+## Merkle trees: verify a piece without the whole
+
+Hashing a 10 GB file tells you *whether* it changed, but not *where*. A **Merkle tree** hashes each chunk, then hashes pairs of hashes, up to a single **root hash**.
+
+<FigurePanel number={1} caption="Merkle tree — tamper with a chunk and watch the mismatch climb to the root">
+  <MerkleDiagram client:visible />
+</FigurePanel>
+
+What it buys you:
+
+- **Find differences fast.** Two replicas compare root hashes. Equal → done. Different → compare the two children, recurse only into the mismatching side. Finding one changed chunk among a million takes ~20 comparisons, not a million. (Cassandra and DynamoDB anti-entropy repair, rsync-like sync tools.)
+- **Prove one chunk belongs** with a *Merkle proof*: the chunk plus the log₂(n) sibling hashes on its path to the root. (BitTorrent piece verification, Bitcoin light clients, Certificate Transparency logs.)
+- **Verify chunks as they stream in** from untrusted peers, without waiting for the whole file.
+
+<Callout variant="example" title="Choosing the hash for integrity work">
+**Detecting accidental corruption only** (disk, network, your own data): CRC32C or xxHash is fine and much faster. **Anything an adversary could touch** (downloads, dedup across users, content IDs, Merkle trees in distributed systems): SHA-256 or BLAKE3. BLAKE3 is internally a Merkle tree, so it hashes large files in parallel across cores.
+</Callout>

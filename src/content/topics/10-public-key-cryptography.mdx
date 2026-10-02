@@ -1,0 +1,82 @@
+---
+title: "Public-Key Cryptography & Signatures"
+category: "cryptography"
+order: 2
+summary: "Key pairs where one key is public — encrypting to someone you've never met, signing so anyone can verify, and how TLS, certificates, and JWTs combine hashes, signatures, and symmetric keys."
+tags: ["rsa", "ecc", "ed25519", "ecdsa", "digital-signature", "key-exchange", "diffie-hellman", "tls", "certificate", "pki", "hybrid-encryption"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import PublicKeyDiagram from "../../components/diagrams/PublicKeyDiagram.tsx";
+
+Symmetric encryption has a chicken-and-egg problem: to talk securely, both sides need the same key — but how do you send it securely? **Public-key (asymmetric) cryptography** solves this with a **key pair**: a **public key** you can hand to anyone, and a **private key** that never leaves your machine. What one key does, only the other can undo.
+
+That supports two different operations, and the trick is remembering which key is used for which:
+
+<FigurePanel number={1} caption="Encrypt vs. sign — which key does what">
+  <PublicKeyDiagram client:visible />
+</FigurePanel>
+
+| Operation | Sender uses | Receiver uses | Guarantees |
+| --- | --- | --- | --- |
+| **Encrypt** | Receiver's **public** key | Receiver's **private** key | Only the receiver can read it (confidentiality) |
+| **Sign** | Sender's **private** key | Sender's **public** key | It came from the sender and wasn't changed (authenticity, integrity, non-repudiation) |
+
+## Signatures: hashing + a private key
+
+A digital signature is essentially *sign(private_key, hash(message))*. The hash keeps it fast — you sign 32 bytes, not a 4 GB file — which is also why a broken hash breaks signatures: if an attacker can find two documents with the same hash, a signature on one is valid for the other. (That's exactly how MD5 collisions were used to forge a CA certificate in 2008.)
+
+Compared to HMAC: HMAC uses one shared key, so anyone who can verify can also forge. A signature separates the two — **only the private-key holder can sign, and anyone with the public key can verify**. That's what lets millions of browsers verify a certificate without being able to mint one.
+
+```python
+# pip install cryptography
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+private_key = Ed25519PrivateKey.generate()
+public_key = private_key.public_key()          # share this freely
+
+sig = private_key.sign(b"release v2.1.0 sha256=3f9a0c...")
+public_key.verify(sig, b"release v2.1.0 sha256=3f9a0c...")   # raises InvalidSignature if anything differs
+```
+
+## The algorithms
+
+| Algorithm | Type | Notes |
+| --- | --- | --- |
+| **RSA** | Encrypt + sign | The classic. Needs big keys: 2048-bit minimum, 3072+ for long-term. Use OAEP padding for encryption, PSS for signatures. |
+| **ECDSA (P-256)** | Sign | Elliptic curve: 256-bit keys ≈ 3072-bit RSA security. Used in TLS certs, JWT ES256, Apple/Google platforms. Fragile if the per-signature random value is ever reused (Sony PS3 was broken this way). |
+| **Ed25519** | Sign | Modern default for new systems: fast, small keys, deterministic (no nonce to get wrong). SSH keys, git signing, Signal, WireGuard. |
+| **X25519 / ECDH** | Key agreement | Two parties derive a shared secret over a public channel. The key-exchange half of TLS 1.3, Signal, WireGuard. |
+| **ML-KEM / ML-DSA** | Post-quantum | NIST-standardized in 2024 (formerly Kyber/Dilithium). Already deployed in hybrid mode in Chrome, Cloudflare, and Signal against "harvest now, decrypt later." |
+
+## Hybrid encryption: how it's really done
+
+Public-key operations are thousands of times slower than AES and can only handle small inputs (RSA-2048 can encrypt ~190 bytes). So nobody encrypts data directly with a public key. Instead:
+
+1. Agree on or send a random **symmetric key** using public-key crypto (ECDH key agreement, or encrypting the key with RSA).
+2. Encrypt the actual data with **AES-GCM / ChaCha20** using that key.
+
+PGP, age, S/MIME, and TLS all work this way.
+
+## Putting it all together: a TLS 1.3 handshake
+
+Every HTTPS request uses everything in this guide:
+
+1. **Key exchange:** client and server each generate an ephemeral **X25519** key pair, exchange public halves, and derive the same shared secret. Nobody watching can compute it. Because the keys are thrown away after, a later server-key compromise can't decrypt recorded traffic (**forward secrecy**).
+2. **Key derivation:** **HKDF** (built on **HMAC-SHA256**) turns the shared secret into separate encryption keys for each direction.
+3. **Authentication:** the server sends its **certificate** — its public key plus its domain name, **signed** by a certificate authority — and **signs a hash of the handshake** with its private key, proving it owns that certificate.
+4. **Verification:** the browser checks the CA's signature using the CA's public key (pre-installed in the OS/browser trust store), the domain, and expiry, then verifies the server's handshake signature.
+5. **Bulk data:** everything after that is **AES-GCM** or **ChaCha20-Poly1305** with the derived keys.
+
+<Callout variant="definition" title="Certificates and PKI">
+A certificate is a signed statement: "this public key belongs to example.com," signed by a CA's private key. The CA's own certificate is signed by a root CA, whose public key ships with your OS. That chain of signatures is **PKI** (public key infrastructure). It answers the question public keys alone can't: *how do I know this public key is really theirs?*
+</Callout>
+
+<Callout variant="warning" title="Things to get right">
+**Never generate keys with a non-cryptographic RNG.** **Protect private keys** — in a KMS/HSM for servers, with a passphrase for files; a leaked signing key means anyone can impersonate you until it's revoked. **Verify the whole chain**, not just "is it signed" — libraries that skip hostname checks are a common source of man-in-the-middle bugs (`verify=False` in `requests` disables all of it). **Don't invent protocols** — use TLS, libsodium/NaCl `box`/`sign`, age, or JOSE libraries with pinned algorithms.
+</Callout>
+
+<Callout variant="example" title="Where you've used key pairs">
+**SSH:** your `~/.ssh/id_ed25519.pub` goes on the server; login is a signature challenge. **Git commit signing:** GPG or SSH signatures, shown as "Verified" on GitHub. **JWT RS256/ES256:** the auth server signs with its private key; every API verifies with the public key from a JWKS endpoint. **Package signing:** apt, npm provenance, Sigstore, and Apple/Android app signing all verify a signature over a hash of the package. **Passkeys / WebAuthn:** your device holds a private key per site and signs a login challenge — no shared secret ever reaches the server.
+</Callout>

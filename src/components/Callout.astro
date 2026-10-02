@@ -1,0 +1,75 @@
+---
+interface Props {
+  variant?: "definition" | "example" | "warning";
+  title?: string;
+}
+
+const { variant = "definition", title } = Astro.props;
+
+const labels = {
+  definition: "Definition",
+  example: "Real-World Example",
+  warning: "Watch Out",
+};
+
+const heading = title ?? labels[variant];
+---
+
+<aside class:list={["callout", `callout--${variant}`]}>
+  <p class="callout__label">{heading}</p>
+  <div class="callout__body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .callout {
+    margin: var(--space-6) 0;
+    padding: var(--space-4) var(--space-6);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .callout__label {
+    margin: 0 0 var(--space-2);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .callout__body {
+    font-family: var(--font-serif);
+    font-size: var(--text-base);
+  }
+
+  .callout__body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .callout--definition {
+    border-left: 3px solid var(--color-accent);
+  }
+  .callout--definition .callout__label {
+    color: var(--color-accent);
+  }
+
+  .callout--example {
+    border-left: 3px solid var(--diagram-state-healthy);
+    background: #eef4ef;
+  }
+  .callout--example .callout__label {
+    color: #3f7a5a;
+  }
+
+  .callout--warning {
+    border-left: 3px solid var(--diagram-state-warning);
+    background: #f7ecd9;
+  }
+  .callout--warning .callout__label {
+    color: #96631f;
+  }
+</style>

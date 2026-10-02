@@ -1,0 +1,80 @@
+---
+title: "Hash Tables, Sharding & Bloom Filters"
+category: "practical-hashing"
+order: 2
+summary: "Using hashes to decide where things go — buckets in memory, partitions across machines, and probabilistic set membership — and why hash(key) % N falls apart when N changes."
+tags: ["hash-table", "sharding", "partitioning", "consistent-hashing", "rendezvous-hashing", "bloom-filter", "load-balancing"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import ConsistentHashingDiagram from "../../components/diagrams/ConsistentHashingDiagram.tsx";
+
+The most common use of hashing has nothing to do with security: it's turning a key into a **location**. Because a good hash spreads inputs uniformly, `hash(key) % N` picks one of N buckets with roughly equal load, deterministically, without any lookup table.
+
+## Hash tables
+
+Every `dict`, `HashMap`, `Map`, and `set` works this way:
+
+1. Compute `hash(key)`.
+2. `index = hash % capacity` picks a slot in an array.
+3. If the slot is taken by a different key (a **collision**), resolve it — chain a linked list off the slot (Java's `HashMap`), or probe the next slots (Python's `dict`, open addressing).
+4. When the table gets too full (load factor ~0.75), allocate a bigger array and **rehash** everything.
+
+That gives O(1) average lookup, as long as the hash spreads keys evenly. Two rules follow:
+
+- **Keys must hash consistently with equality.** If `a.equals(b)`, then `a.hashCode() == b.hashCode()` — overriding one without the other in Java is a classic bug where a key is "in" the map but `get` returns null.
+- **Don't mutate keys while they're in a table.** The key's hash changes, and it's now filed in the wrong bucket.
+
+## Sharding: hash(key) % N, and its problem
+
+The same trick spreads data across servers: `shard = hash(user_id) % 4`. It's simple and balanced — until you add a fifth server. Then `hash % 5` gives a different answer than `hash % 4` for about **80%** of keys, and nearly all your data has to move (or, for a cache cluster, nearly every lookup misses at once).
+
+<FigurePanel number={1} caption="Adding a server: modulo vs. consistent hashing">
+  <ConsistentHashingDiagram client:visible />
+</FigurePanel>
+
+### Consistent hashing
+
+Instead of `% N`, hash both servers *and* keys onto the same circular space (0 to 2³²−1). Each key belongs to the **first server clockwise** from it. Adding a server only takes over the keys in the arc just before it — about **1/N** of keys move, not most of them.
+
+Raw consistent hashing has uneven arcs, so in practice each server is placed at many points on the ring (**virtual nodes**, often 100–256 per server). More vnodes → smoother load, and a server's load is spread across all others when it leaves.
+
+Used by: Amazon Dynamo / DynamoDB, Cassandra, Riak, memcached client libraries (ketama), Envoy and NGINX `hash ... consistent` load balancing, CDNs.
+
+<Callout variant="definition" title="Alternatives to the ring">
+**Rendezvous (highest-random-weight) hashing:** for each key, compute `hash(key + server)` for every server and pick the highest. Also moves only 1/N of keys, needs no ring or vnodes; O(N) per lookup, fine for tens of servers. **Jump consistent hash** (Google): a few lines of code, no memory, perfectly balanced — but servers can only be added/removed at the end of the list. **Fixed partitions** (Kafka, Elasticsearch, Redis Cluster's 16,384 slots): hash into a large, fixed number of partitions, then assign *partitions* to servers. Adding a server moves whole partitions, and the key→partition mapping never changes.
+</Callout>
+
+<Callout variant="warning" title="Hot keys aren't fixed by hashing">
+Hashing balances the number of *keys* per shard, not the *traffic*. If one celebrity account gets 10,000× the reads, the shard that owns it is hot no matter which hash you use. That needs replication of hot keys, a key-splitting scheme (`key#0`…`key#9`), or a cache in front.
+</Callout>
+
+## Bloom filters: "definitely not" or "probably yes"
+
+A Bloom filter answers *"have I seen this item?"* using a tiny fraction of the memory of storing the items themselves, at the cost of occasional false positives.
+
+1. Start with an array of *m* bits, all 0.
+2. **Add** an item: hash it with *k* different hash functions, set those *k* bits to 1.
+3. **Check** an item: hash it the same *k* ways. If **any** bit is 0 → the item was **definitely never added**. If all are 1 → it **probably** was (or those bits were set by other items).
+
+```text
+add("alice")  → bits 3, 9, 14 set
+add("bob")    → bits 1, 9, 20 set
+check("carol") → bits 3, 7, 20 → bit 7 is 0 → definitely not present
+check("dave")  → bits 1, 3, 14 → all 1 (set by alice & bob) → false positive
+```
+
+With ~10 bits per item and 7 hash functions, the false-positive rate is about **1%** — regardless of how big the items are. No false negatives, ever. You can't delete items (use a counting Bloom filter or a cuckoo filter for that).
+
+<Callout variant="example" title="Where Bloom filters save a disk read">
+**LSM-tree databases** (Cassandra, RocksDB, HBase, LevelDB) keep a Bloom filter per on-disk file, so a read for a missing key skips files that definitely don't contain it. **Chrome** once used one to check URLs against a malware list locally before asking the server. **Medium** used one to avoid recommending articles you've already read. **CDNs** use them to cache only objects requested more than once ("one-hit wonders" never get cached).
+</Callout>
+
+## Other "hash to decide" patterns
+
+- **Load balancing with session affinity:** `hash(client_ip) → backend` keeps a client on the same server without shared session state.
+- **A/B testing and gradual rollouts:** `hash(user_id + experiment_name) % 100 < 10` puts a stable, random-looking 10% of users in the experiment. Including the experiment name makes each experiment's buckets independent.
+- **Sampling:** keep only events where `hash(trace_id) % 1000 == 0` — every service makes the same decision for the same trace, with no coordination.
+- **Count-distinct at scale:** HyperLogLog hashes each item and tracks the longest run of leading zeros, estimating billions of unique visitors in ~12 KB (Redis `PFADD`/`PFCOUNT`).
+- **Similarity search:** MinHash and SimHash produce hashes where *similar* documents get *similar* hashes — the opposite of the avalanche effect, on purpose — for near-duplicate detection.

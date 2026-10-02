@@ -1,0 +1,67 @@
+---
+title: "Choosing a Hash Algorithm"
+category: "fundamentals"
+order: 3
+summary: "MD5, SHA-1, SHA-256, SHA-3, BLAKE3, xxHash, bcrypt, Argon2 — which family each belongs to, which are broken, and which to reach for by default."
+tags: ["md5", "sha-1", "sha-256", "sha-3", "blake2", "blake3", "xxhash", "murmurhash", "crc32", "length-extension"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import AlgorithmDiagram from "../../components/diagrams/AlgorithmDiagram.tsx";
+
+There are four families of hash function, and most mistakes come from using one family for another family's job — a fast hash for passwords, a non-cryptographic hash on attacker input, or a slow password hash for a hash table.
+
+<FigurePanel number={1} caption="The four families — click any algorithm">
+  <AlgorithmDiagram client:visible />
+</FigurePanel>
+
+## Quick-reference table
+
+| Algorithm | Output | Status | Use it for |
+| --- | --- | --- | --- |
+| CRC32 | 32 bits | Checksum only | Detecting accidental corruption (zip, Ethernet, PNG) |
+| MurmurHash3 | 32 / 128 bits | Non-crypto | Hash tables, Bloom filters, partitioning |
+| xxHash (XXH3) | 64 / 128 bits | Non-crypto | Fast checksums, dedup of trusted data |
+| MD5 | 128 bits | **Broken** (collisions in seconds) | Legacy compatibility, non-adversarial fingerprints only |
+| SHA-1 | 160 bits | **Broken** (SHAttered, 2017) | Nothing new; legacy (old git, old TLS) |
+| SHA-256 / SHA-512 | 256 / 512 bits | Secure | **The default** for integrity, IDs, HMAC, signatures |
+| SHA-3 | 224–512 bits | Secure | Where a non-SHA-2 design is required |
+| BLAKE2b / BLAKE3 | variable | Secure | When speed matters or you want a custom output length |
+| bcrypt | 184 bits (60-char string) | Secure, slow by design | Passwords |
+| Argon2id | configurable | Secure, slow + memory-hard | Passwords (current best practice) |
+
+## The default answers
+
+- **Need a general-purpose hash?** SHA-256.
+- **Need it faster, still secure?** BLAKE3 (or BLAKE2b — built into Python's `hashlib`).
+- **Hashing a password?** Argon2id, or bcrypt if that's what your framework ships.
+- **Only bucketing data you control, need max speed?** xxHash / MurmurHash3.
+- **Need to prove who created the hash?** That's not a hash — use HMAC-SHA256.
+
+## What "broken" means for MD5 and SHA-1
+
+Both are broken for **collision resistance**: an attacker can construct two *different* inputs with the same hash. In 2008 researchers used MD5 collisions to forge a trusted CA certificate; in 2017 Google published two different PDFs with the same SHA-1 hash.
+
+They are *not* (practically) broken for **preimage resistance** — given just a hash, nobody can find an input that produces it. That's why MD5 is still acceptable as a cache key or ETag for data no attacker controls. But "acceptable in a narrow case" is a maintenance trap: code outlives its context. If you're writing something new, the speed difference no longer justifies the risk — use SHA-256 or BLAKE3.
+
+<Callout variant="warning" title="Length-extension attacks on SHA-256">
+MD5, SHA-1, SHA-256, and SHA-512 share a construction (Merkle–Damgård) with a quirk: given `SHA256(secret + message)` and the *length* of the secret, an attacker can compute `SHA256(secret + message + padding + anything)` **without knowing the secret**. So `sha256(secret + data)` is a broken way to sign things. Use **HMAC** — that's exactly the problem it solves. SHA-3, BLAKE2/3, and the truncated SHA-512/256 are immune.
+</Callout>
+
+## Why speed is good — except for passwords
+
+For most uses, a faster hash is strictly better. For passwords it's the opposite: an attacker who steals your database guesses passwords by hashing candidates, and their guess rate is limited only by your hash's speed.
+
+| Hash | Approximate guesses/second on one high-end GPU |
+| --- | --- |
+| MD5 | ~150 billion |
+| SHA-256 | ~20 billion |
+| bcrypt (cost 12) | ~thousands |
+| Argon2id (64 MB memory) | ~hundreds or fewer |
+
+(Orders of magnitude only — exact figures vary by hardware and parameters, but the gap of six to eight orders of magnitude is the point.) A password that would fall in a second under SHA-256 takes years under Argon2. See [Salting & Password Hashing](../07-salting-and-password-hashing/).
+
+<Callout variant="example" title="What real systems use">
+**Git** content IDs: SHA-1, migrating to SHA-256. **Bitcoin**: double SHA-256. **TLS 1.3**: SHA-256/384 inside HMAC and HKDF. **Docker image digests**: `sha256:…`. **S3 ETags**: MD5 of the object (for single-part uploads). **Kafka default partitioner**: murmur2. **Cassandra token ring**: Murmur3. **Linux `/etc/shadow`**: `$6$` = SHA-512-crypt (5,000 rounds) or `$y$` = yescrypt on newer distros.
+</Callout>

@@ -1,0 +1,46 @@
+---
+interface Props {
+  number: number;
+  caption: string;
+}
+
+const { number, caption } = Astro.props;
+---
+
+<figure class="figure-panel">
+  <div class="figure-panel__tab">Fig. {number} — {caption}</div>
+  <div class="figure-panel__stage">
+    <slot />
+  </div>
+</figure>
+
+<style>
+  .figure-panel {
+    margin: var(--space-8) 0;
+  }
+
+  .figure-panel__tab {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--diagram-text-muted);
+    background: var(--diagram-bg);
+    border: 1px solid var(--diagram-border);
+    border-bottom: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    padding: var(--space-1) var(--space-3);
+    margin-left: var(--space-4);
+    position: relative;
+    top: 1px;
+  }
+
+  .figure-panel__stage {
+    background: var(--diagram-bg);
+    border: 1px solid var(--diagram-border);
+    border-radius: 0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
+    padding: var(--space-6);
+    box-shadow: var(--shadow-diagram);
+    color: var(--diagram-text);
+    overflow-x: auto;
+  }
+</style>

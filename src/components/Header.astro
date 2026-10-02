@@ -1,0 +1,37 @@
+---
+import SearchBar from "./SearchBar.astro";
+---
+
+<header class="header">
+  <a class="header__brand" href={import.meta.env.BASE_URL}>Hash Notes — A Hashing & Cryptography Field Guide</a>
+  <SearchBar />
+</header>
+
+<style>
+  .header {
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-6);
+    padding: 0 var(--space-6);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+  }
+
+  .header__brand {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: var(--text-base);
+    color: var(--color-text);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .header__brand:hover {
+    text-decoration: none;
+    color: var(--color-accent);
+  }
+</style>

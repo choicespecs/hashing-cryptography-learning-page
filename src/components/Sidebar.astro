@@ -1,0 +1,103 @@
+---
+import { getCollection } from "astro:content";
+import { CATEGORIES } from "../lib/categories";
+
+interface Props {
+  activeSlug?: string;
+}
+
+const { activeSlug } = Astro.props;
+
+const allTopics = await getCollection("topics");
+
+const grouped = CATEGORIES.map((category) => ({
+  ...category,
+  topics: allTopics
+    .filter((t) => t.data.category === category.id)
+    .sort((a, b) => a.data.order - b.data.order),
+}));
+---
+
+<nav class="sidebar" aria-label="Topics">
+  {
+    grouped.map((category) => (
+      <div class="sidebar__group">
+        <p class="sidebar__group-label">{category.title}</p>
+        <ul>
+          {category.topics.map((topic) => (
+            <li>
+              <a
+                href={`${import.meta.env.BASE_URL}topics/${topic.id}/`}
+                class:list={[
+                  "sidebar__link",
+                  { "sidebar__link--active": topic.id === activeSlug },
+                ]}
+              >
+                {topic.data.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))
+  }
+</nav>
+
+<style>
+  .sidebar {
+    width: var(--sidebar-width);
+    flex-shrink: 0;
+    padding: var(--space-6) var(--space-4);
+    border-right: 1px solid var(--color-border);
+    background: var(--color-surface);
+    overflow-y: auto;
+  }
+
+  .sidebar__group {
+    margin-bottom: var(--space-8);
+  }
+
+  .sidebar__group-label {
+    margin: 0 0 var(--space-2) var(--space-2);
+    font-family: var(--font-sans);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .sidebar__link {
+    display: block;
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+    margin-bottom: 2px;
+    border-left: 2px solid transparent;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    text-decoration: none;
+    transition:
+      background var(--transition-fast),
+      color var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+
+  .sidebar__link:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+    text-decoration: none;
+  }
+
+  .sidebar__link--active {
+    border-left-color: var(--color-accent);
+    color: var(--color-accent);
+    font-weight: 500;
+  }
+</style>

@@ -1,0 +1,187 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { CATEGORIES } from "../lib/categories";
+
+const allTopics = await getCollection("topics");
+
+const CHEATSHEET = [
+  { need: "Shorten a long string to a fixed-length key (e.g. under 40 chars)", use: "SHA-256 → first 16 bytes → hex (32) or Base64url (22)", slug: "04-shortening-strings-with-hashes", page: "Shortening Strings" },
+  { need: "Store user passwords", use: "Argon2id or bcrypt (salt built in)", slug: "07-salting-and-password-hashing", page: "Salting & Passwords" },
+  { need: "Store API keys / reset tokens I issued", use: "SHA-256 of the random token", slug: "08-hmac-and-signed-tokens", page: "HMAC & Tokens" },
+  { need: "Prove a webhook / cookie / URL came from me", use: "HMAC-SHA256 + constant-time compare", slug: "08-hmac-and-signed-tokens", page: "HMAC & Tokens" },
+  { need: "Check a file wasn't corrupted or changed", use: "SHA-256 (CRC32C/xxHash if no attacker)", slug: "06-integrity-and-content-addressing", page: "Integrity & Dedup" },
+  { need: "Spread keys across servers or buckets", use: "MurmurHash/xxHash + consistent hashing", slug: "05-hash-tables-sharding-and-bloom-filters", page: "Sharding & Bloom Filters" },
+  { need: "Keep data secret but get it back later", use: "AES-256-GCM, key in a KMS", slug: "09-symmetric-encryption", page: "Symmetric Encryption" },
+  { need: "Let anyone verify I signed something", use: "Ed25519 / ECDSA signature", slug: "10-public-key-cryptography", page: "Public-Key Crypto" },
+  { need: "Send bytes through a text-only channel", use: "Base64url or hex (not security!)", slug: "02-hashing-vs-encryption-vs-encoding", page: "Hash vs Encrypt vs Encode" },
+];
+
+const grouped = CATEGORIES.map((category) => ({
+  ...category,
+  topics: allTopics
+    .filter((t) => t.data.category === category.id)
+    .sort((a, b) => a.data.order - b.data.order),
+}));
+---
+
+<BaseLayout
+  title="Hash Notes — A Hashing & Cryptography Field Guide"
+  description="A personal reference for hashing and cryptography — hash functions, shortening strings, salting, password hashing, HMAC, encryption, and signatures — each with a live, interactive diagram."
+>
+  <div class="landing">
+    <p class="landing__eyebrow">A field guide to</p>
+    <h1>Hashing &amp; Cryptography</h1>
+    <p class="landing__intro">
+      A personal reference for turning data into fingerprints, secrets, and proofs — what hash
+      functions guarantee, how to shorten a string to fit a limit, how to store passwords, how
+      to sign and encrypt. Every diagram runs real SHA-256, HMAC, and AES in your browser, so
+      you can poke at the actual outputs.
+    </p>
+
+    <section class="landing__part">
+      <h2>Which tool do I need?</h2>
+      <table class="cheatsheet">
+        <thead>
+          <tr><th>I want to…</th><th>Use</th><th>Read</th></tr>
+        </thead>
+        <tbody>
+          {CHEATSHEET.map((row) => (
+            <tr>
+              <td>{row.need}</td>
+              <td><code>{row.use}</code></td>
+              <td><a href={`${import.meta.env.BASE_URL}topics/${row.slug}/`}>{row.page}</a></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+
+    {
+      grouped.map((category) => (
+        <section class="landing__part">
+          <h2>{category.title}</h2>
+          <div class="landing__grid">
+            {category.topics.map((topic) => (
+              <a class="topic-card" href={`${import.meta.env.BASE_URL}topics/${topic.id}/`}>
+                <h3>{topic.data.title}</h3>
+                <p>{topic.data.summary}</p>
+              </a>
+            ))}
+            {category.topics.length === 0 && <p class="landing__empty">Coming soon.</p>}
+          </div>
+        </section>
+      ))
+    }
+  </div>
+</BaseLayout>
+
+<style>
+  .landing {
+    max-width: 960px;
+  }
+
+  .landing__eyebrow {
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    margin: 0 0 var(--space-2);
+  }
+
+  .landing h1 {
+    margin-bottom: var(--space-4);
+  }
+
+  .landing__intro {
+    font-family: var(--font-serif);
+    font-size: var(--text-lg);
+    color: var(--color-text-muted);
+    max-width: var(--max-width-prose);
+    margin-bottom: var(--space-12);
+  }
+
+  .landing__part {
+    margin-bottom: var(--space-12);
+  }
+
+  .landing__part h2 {
+    margin-bottom: var(--space-6);
+  }
+
+  .landing__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-4);
+  }
+
+  .landing__empty {
+    font-family: var(--font-serif);
+    font-style: italic;
+    color: var(--color-text-muted);
+  }
+
+  .cheatsheet {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    display: block;
+    overflow-x: auto;
+  }
+
+  .cheatsheet th,
+  .cheatsheet td {
+    text-align: left;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+  }
+
+  .cheatsheet tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .cheatsheet code {
+    white-space: normal;
+  }
+
+  .topic-card {
+    display: block;
+    padding: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    text-decoration: none;
+    color: inherit;
+    transition:
+      border-color var(--transition-fast),
+      box-shadow var(--transition-fast),
+      transform var(--transition-fast);
+  }
+
+  .topic-card:hover {
+    border-color: var(--color-accent);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+    text-decoration: none;
+  }
+
+  .topic-card h3 {
+    font-size: var(--text-base);
+    margin: 0 0 var(--space-2);
+    color: var(--color-text);
+  }
+
+  .topic-card p {
+    font-family: var(--font-serif);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+</style>

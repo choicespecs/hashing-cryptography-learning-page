@@ -1,0 +1,50 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import { categoryMeta, type CategoryId } from "../lib/categories";
+
+interface Props {
+  title: string;
+  summary: string;
+  category: CategoryId;
+  slug: string;
+}
+
+const { title, summary, category, slug } = Astro.props;
+const meta = categoryMeta(category);
+---
+
+<BaseLayout title={`${title} — Hash Notes`} description={summary} activeSlug={slug}>
+  <article class="topic">
+    <p class="topic__eyebrow">{meta.title}</p>
+    <h1>{title}</h1>
+    <p class="topic__summary">{summary}</p>
+    <div class="prose">
+      <slot />
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .topic {
+    max-width: 900px;
+  }
+
+  .topic__eyebrow {
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    margin: 0 0 var(--space-2);
+  }
+
+  .topic__summary {
+    font-family: var(--font-serif);
+    font-size: var(--text-lg);
+    color: var(--color-text-muted);
+    font-style: italic;
+    max-width: var(--max-width-prose);
+    margin-bottom: var(--space-8);
+  }
+</style>

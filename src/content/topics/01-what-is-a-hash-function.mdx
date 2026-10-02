@@ -1,0 +1,78 @@
+---
+title: "What a Hash Function Is"
+category: "fundamentals"
+order: 1
+summary: "A function that maps input of any size to a fixed-size fingerprint — deterministic, fast, and (for cryptographic hashes) impossible to reverse or collide on purpose."
+tags: ["hash", "digest", "determinism", "avalanche", "preimage", "collision", "pigeonhole"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import AvalancheDiagram from "../../components/diagrams/AvalancheDiagram.tsx";
+
+A **hash function** takes an input of any length — a password, a URL, a 4 GB video — and returns an output of a fixed length, called the **hash**, **digest**, or **fingerprint**. SHA-256 always returns 256 bits (64 hex characters), whether you feed it one byte or a terabyte.
+
+```text
+SHA-256("hello")  = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+SHA-256("hello!") = ce06092fb948d9ffac7d1a376e404b26b7575bcc11ee05a4615fef4fec3a308b
+SHA-256(<the entire text of Wikipedia>) = still exactly 64 hex characters
+```
+
+Almost every use of hashing in this guide — shortening strings, storing passwords, detecting tampering, distributing data across servers — comes from a handful of properties.
+
+<FigurePanel number={1} caption="The avalanche effect — change one character, flip half the bits">
+  <AvalancheDiagram client:visible />
+</FigurePanel>
+
+## The properties every hash has
+
+| Property | Meaning | What it enables |
+| --- | --- | --- |
+| **Deterministic** | Same input → same output, every time, on every machine. | Lookups, cache keys, dedup, comparing without storing the original. |
+| **Fixed output size** | Output length doesn't depend on input length. | Shortening strings, fixed-width index columns. |
+| **Fast to compute** | Linear in input size; GB/s for the fast ones. | Checksumming big files, hash tables. |
+| **Uniform distribution** | Outputs are spread evenly across the output space. | Even sharding/bucketing; few accidental collisions. |
+
+## The extra properties of a *cryptographic* hash
+
+A cryptographic hash (SHA-256, SHA-3, BLAKE2) adds guarantees that hold even against an attacker who is actively trying to break them:
+
+| Property | Meaning | Breaks if it fails |
+| --- | --- | --- |
+| **Preimage resistance** (one-way) | Given a hash `h`, you can't find *any* input with `hash(x) = h`. | Password storage, commitments. |
+| **Second-preimage resistance** | Given an input `x`, you can't find a different `y` with the same hash. | File integrity: an attacker could swap your file for theirs. |
+| **Collision resistance** | You can't find *any* two inputs `x ≠ y` with the same hash. | Digital signatures, certificates, content addressing. |
+| **Avalanche effect** | Changing one input bit flips ~50% of output bits. | Similar inputs leak nothing about each other. |
+
+<Callout variant="definition" title="'Can't' means 'computationally infeasible'">
+Collisions *must* exist — there are infinitely many inputs and only 2²⁵⁶ outputs (the **pigeonhole principle**). "Collision resistant" means finding one would take so much computation (~2¹²⁸ hash evaluations for SHA-256) that it's out of reach for every computer on Earth for longer than the age of the universe. When a hash is called "broken" (MD5, SHA-1), it means someone found a shortcut far cheaper than that.
+</Callout>
+
+## A hash is not encryption
+
+There is no key and no "unhash" function. The only way to go from a hash back to an input is to **guess** inputs, hash each guess, and compare. That's why:
+
+- Hashing a *long random* value (an API token, a file) is effectively irreversible.
+- Hashing a *short predictable* value (a password, a phone number, an SSN — only ~10⁹ possibilities) is **not** private: an attacker hashes all billion candidates in seconds. That's what salting and slow hashes are for (see [Salting & Password Hashing](../07-salting-and-password-hashing/)).
+
+<Callout variant="warning" title="Hashing PII doesn't anonymize it">
+"We only store SHA-256 of the email address" sounds private, but anyone with a list of emails can hash the list and join on it. Low-entropy inputs — emails, phone numbers, IPs, dates of birth — are trivially re-identified from plain hashes. Use an HMAC with a secret key (pseudonymization) or don't store it.
+</Callout>
+
+## Cryptographic vs. non-cryptographic
+
+Both are "hash functions," but they're built for different jobs:
+
+| | Non-cryptographic | Cryptographic |
+| --- | --- | --- |
+| Examples | CRC32, MurmurHash3, xxHash, FNV, `String.hashCode()` | SHA-256, SHA-3, BLAKE2/3 |
+| Goal | Spread inputs evenly, as fast as possible | Resist a deliberate attacker |
+| Speed | Very fast (10+ GB/s for xxHash) | Fast (~1–2 GB/s for SHA-256 with hardware support) |
+| Safe with untrusted input? | No — attackers can craft collisions | Yes |
+| Typical use | Hash tables, Bloom filters, partitioners, checksums | Integrity, signatures, IDs from untrusted data, HMAC |
+
+When in doubt, use SHA-256. It's fast enough for nearly everything, and it never becomes a security bug later when someone feeds it user input.
+
+<Callout variant="example" title="Hash-flooding attacks">
+In 2011, researchers showed that PHP, Java, Python, Ruby, and ASP.NET web frameworks could be taken down by a single POST request with thousands of form fields crafted to land in the *same* hash-table bucket — turning O(1) inserts into O(n), and the request into minutes of CPU. The fix was to use **keyed, randomized** hashes (like SipHash) for hash tables, which is why Python's `hash()` changes per process.
+</Callout>

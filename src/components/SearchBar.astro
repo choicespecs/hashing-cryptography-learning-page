@@ -1,0 +1,44 @@
+---
+import Search from "astro-pagefind/components/Search.astro";
+---
+
+<div class="search">
+  <Search className="search__box" />
+</div>
+
+<style is:global>
+  /* Theme Pagefind's component-ui via its own CSS custom properties
+     (see @pagefind/component-ui/css/pagefind-component-ui.css) so it
+     matches the Field Manual palette instead of its light-mode default. */
+  .search {
+    --pf-text: var(--color-text);
+    --pf-text-secondary: var(--color-text-muted);
+    --pf-text-muted: var(--color-text-muted);
+    --pf-background: var(--color-bg);
+    --pf-border: var(--color-border);
+    --pf-border-focus: var(--color-accent);
+    --pf-hover: var(--color-surface-hover);
+    --pf-mark: var(--color-accent);
+    --pf-outline-focus: var(--color-accent);
+    --pf-font: var(--font-sans);
+    --pf-input-height: 38px;
+    --pf-input-font-size: var(--text-sm);
+    --pf-result-title-font-size: var(--text-sm);
+    --pf-result-excerpt-font-size: var(--text-sm);
+    --pf-border-radius: 8px;
+    --pf-searchbox-max-width: 260px;
+    --pf-shadow-md: var(--shadow-md);
+  }
+
+  .search__box {
+    width: 260px;
+    max-width: 40vw;
+  }
+
+  /* Calm, book-like empty/loading copy instead of a bare "No results" */
+  .search .pf-searchbox-empty,
+  .search .pf-searchbox-loading {
+    font-family: var(--font-serif);
+    font-style: italic;
+  }
+</style>

@@ -1,0 +1,94 @@
+---
+title: "HMAC & Signed Tokens"
+category: "passwords-and-authentication"
+order: 2
+summary: "A hash with a secret key mixed in — proving a message came from someone holding the key and wasn't altered. Behind webhook signatures, JWTs, signed URLs, session cookies, and API request signing."
+tags: ["hmac", "mac", "webhook", "jwt", "signed-url", "api-signing", "constant-time", "timing-attack", "token-storage"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import HmacDiagram from "../../components/diagrams/HmacDiagram.tsx";
+
+A plain hash proves data hasn't changed — but anyone can compute a hash, so an attacker who changes the data just recomputes it. A **MAC** (message authentication code) fixes that by mixing in a **secret key**: only someone with the key can produce a valid tag, and only someone with the key can check it.
+
+**HMAC** is the standard way to build a MAC from a hash function: `HMAC-SHA256(key, message)` → 32 bytes.
+
+<FigurePanel number={1} caption="Webhook signing — tamper with the body and the signature stops matching">
+  <HmacDiagram client:visible />
+</FigurePanel>
+
+## What HMAC gives you
+
+- **Integrity** — any change to the message changes the tag.
+- **Authenticity** — the tag could only have been produced by a holder of the key.
+- **Not confidentiality** — the message itself is sent in the clear. Encrypt separately if it's secret.
+- **Not non-repudiation** — both sides hold the same key, so either could have produced the tag. If you need to prove *which* party signed, use a digital signature (public/private key).
+
+<Callout variant="warning" title="Why not just sha256(secret + message)?">
+Because of **length extension** (see [Choosing a Hash Algorithm](../03-choosing-a-hash-algorithm/)): with SHA-256, knowing `sha256(secret + msg)` lets an attacker compute a valid hash for `msg + padding + "&admin=true"` without the secret. HMAC's construction — `H((K ⊕ opad) ‖ H((K ⊕ ipad) ‖ msg))` — hashes twice with the key in both, which closes that hole. Use the HMAC function from your standard library; never hand-roll it.
+</Callout>
+
+## Verifying correctly
+
+```python
+import hmac, hashlib
+
+def verify_webhook(secret: bytes, body: bytes, header_sig: str) -> bool:
+    expected = hmac.new(secret, body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header_sig)   # constant-time
+```
+
+```javascript
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verifyWebhook(secret, rawBody, headerSig) {
+  const expected = createHmac("sha256", secret).update(rawBody).digest();
+  const given = Buffer.from(headerSig, "hex");
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+```
+
+Three details that cause real bugs:
+
+1. **Verify the raw bytes.** Sign/verify the body exactly as received. If your framework parses JSON and you re-serialize it, key order or whitespace changes and every signature fails.
+2. **Compare in constant time.** `==` stops at the first differing byte, so response time leaks how many leading bytes matched. An attacker can discover a valid signature byte by byte. Use `hmac.compare_digest`, `crypto.timingSafeEqual`, `MessageDigest.isEqual`.
+3. **Include a timestamp and reject old ones.** Otherwise an attacker can **replay** a captured, validly-signed request forever. Stripe signs `timestamp + "." + body` and rejects anything older than 5 minutes.
+
+## Where HMAC shows up
+
+| Use | How |
+| --- | --- |
+| **Webhook signatures** | Stripe, GitHub, Shopify, Slack: `HMAC-SHA256(endpoint_secret, timestamp + body)` in a header. |
+| **JWT (HS256)** | `HMAC-SHA256(secret, base64url(header) + "." + base64url(payload))` is the third segment. |
+| **Signed URLs** | S3 pre-signed URLs and CDN tokens: HMAC over path + expiry; the server verifies without a DB lookup. |
+| **Session cookies** | Flask, Express `cookie-signature`, Rails: `value.HMAC(value)` so users can't edit their cookie. |
+| **API request signing** | AWS Signature V4: an HMAC chain over the canonical request, so the secret key is never sent. |
+| **Pseudonymizing PII** | `HMAC(key, email)` gives a stable join key that can't be brute-forced without the key — unlike plain `sha256(email)`. |
+| **Key derivation** | HKDF (used in TLS 1.3, Signal) derives many keys from one secret using HMAC. |
+
+## JWTs specifically
+
+A JWT is three Base64url segments: `header.payload.signature`. The payload is **readable by anyone** — only the signature is protected.
+
+<Callout variant="warning" title="JWT pitfalls">
+**Don't put secrets in the payload** — it's encoded, not encrypted. **Pin the algorithm on verify** (`algorithms=["HS256"]`) — old libraries accepted `alg: none`, or let an attacker switch RS256 → HS256 and "sign" with the *public* key. **Use a long random secret** for HS256 (32+ random bytes); short secrets are brute-forced offline from a single token. **Check `exp`**, and remember you can't revoke a JWT before it expires without keeping a denylist. **HS256 vs RS256/ES256:** HMAC means every service that *verifies* can also *mint* tokens. If many services verify but only one should issue, use an asymmetric signature.
+</Callout>
+
+## Storing API keys and tokens: hash them
+
+Long, random, server-generated secrets — API keys, password-reset tokens, session IDs, refresh tokens — should be stored **hashed** (so a DB leak doesn't hand out working credentials), but unlike passwords they don't need a slow hash: 256 random bits can't be brute-forced no matter how fast the hash is. A plain SHA-256 (or HMAC with a server key) is right, and it keeps lookups fast and indexable:
+
+```python
+token = secrets.token_urlsafe(32)                       # give this to the user once
+db.save(token_hash=hashlib.sha256(token.encode()).hexdigest())
+
+# on each request
+row = db.find(token_hash=hashlib.sha256(presented.encode()).hexdigest())
+```
+
+GitHub-style keys also add a **readable prefix** (`ghp_`, `sk_live_`) and a short checksum, so secret scanners can detect leaked keys in public code.
+
+<Callout variant="example" title="Choosing between hash, HMAC, salted slow hash">
+**User-chosen password** → salted slow hash (Argon2id). **Server-generated random token** → SHA-256 (fast is fine). **Message that must prove its sender** → HMAC (shared key) or signature (key pair). **Non-secret data you want a fingerprint of** → SHA-256. **Low-entropy identifier you want a stable pseudonym for** → HMAC with a secret key.
+</Callout>

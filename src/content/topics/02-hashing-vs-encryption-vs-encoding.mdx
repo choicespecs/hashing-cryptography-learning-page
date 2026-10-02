@@ -1,0 +1,75 @@
+---
+title: "Hashing vs. Encryption vs. Encoding"
+category: "fundamentals"
+order: 2
+summary: "Three transformations that all turn readable data into gibberish — but only one hides it with a key, only one is irreversible, and one provides no security at all."
+tags: ["encoding", "base64", "hex", "encryption", "hashing", "reversible", "one-way"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import EncodingDiagram from "../../components/diagrams/EncodingDiagram.tsx";
+
+All three produce output that looks like random characters, which is exactly why they get confused. The question that separates them: **who can get the original back?**
+
+| | Encoding | Encryption | Hashing |
+| --- | --- | --- | --- |
+| Purpose | Represent data in a different format | Keep data **secret** | **Fingerprint** data |
+| Reversible? | Yes, by anyone | Yes, with the key | No |
+| Uses a key? | No | Yes | No (except keyed hashes like HMAC) |
+| Output size | Proportional to input | Proportional to input (+ small overhead) | **Fixed** |
+| Examples | Base64, hex, URL-encoding, UTF-8 | AES-GCM, ChaCha20-Poly1305, RSA | SHA-256, BLAKE2, bcrypt |
+| Question it answers | "How do I send these bytes through a text-only channel?" | "How do I keep this readable *only* for the right people?" | "Is this the same thing as before?" |
+
+<FigurePanel number={1} caption="Same input, three transformations">
+  <EncodingDiagram client:visible />
+</FigurePanel>
+
+## Encoding: formatting, not security
+
+Encoding exists because many channels only accept certain characters: JSON and HTTP headers want text, URLs forbid spaces and `/` in some positions, email was 7-bit ASCII. Encodings re-spell arbitrary bytes using a safe alphabet:
+
+- **Hex (Base16)** — 2 characters per byte. Easy to read, case-insensitive, twice the size.
+- **Base64** — 4 characters per 3 bytes (~33% larger). Uses `+`, `/`, `=` padding.
+- **Base64url** — Base64 with `-` and `_` instead of `+` and `/`, safe in URLs and filenames. Used by JWTs.
+- **URL (percent) encoding** — `space` → `%20`. Only escapes the characters that need it.
+
+<Callout variant="warning" title="Base64 is not encryption">
+The value of an HTTP Basic Auth header (`Authorization: Basic YWxpY2U6aHVudGVyMg==`) is just Base64 of `alice:hunter2`. Kubernetes `Secret` objects are Base64-encoded, *not* encrypted, by default. A JWT's payload is readable by anyone who pastes it into a decoder. If something "looks scrambled," check whether it ends in `=` or decodes cleanly before assuming it's protected.
+</Callout>
+
+## Encryption: secret, but recoverable
+
+Encryption scrambles data so that only someone holding the right **key** can unscramble it. Use it whenever you need the original value back later:
+
+- Storing a third-party API key your app needs to call that API.
+- Data at rest (disk, database columns with PII, backups).
+- Data in transit (TLS).
+
+Two families, covered in later pages: **symmetric** (one shared key — AES, fast, used for bulk data) and **asymmetric** (a public/private key pair — RSA, elliptic curves — used to exchange keys and sign things).
+
+## Hashing: one-way fingerprints
+
+Use hashing when you never need the original back — only to **recognize** it again:
+
+- **Passwords** — store the hash; at login, hash the attempt and compare. (Must be a *slow, salted* hash.)
+- **Integrity** — publish the SHA-256 of a download; anyone can verify their copy matches.
+- **Identity / shortening** — a fixed-length key derived from a long value.
+- **Bucketing** — hash tables, sharding, load balancing.
+
+## Choosing the right one
+
+```text
+Do you need the original value back later?
+├── Yes ─ Must it be kept secret from people who see the stored/sent value?
+│         ├── Yes → ENCRYPT  (AES-256-GCM; key in a KMS / secrets manager)
+│         └── No  → ENCODE   (Base64/hex only to fit the channel)
+└── No ── Do you need to recognize or verify it later?
+          ├── It's a password → SLOW SALTED HASH (Argon2id / bcrypt)
+          ├── Must prove who produced it → HMAC (shared secret) or SIGNATURE (key pair)
+          └── Otherwise → HASH (SHA-256, truncate if needed)
+```
+
+<Callout variant="example" title="Classic mistakes this table prevents">
+**Encrypting passwords** — whoever steals the key gets every password in plaintext; hash them instead. **Hashing an API key you need to use later** — you can't get it back to send to the API; encrypt it instead. **Base64-ing a secret in a config file and calling it 'obfuscated'** — it's plaintext with extra steps. **Hashing credit card numbers for "security"** — only ~10¹⁰ plausible numbers per issuer prefix, so they can be brute-forced; use tokenization or encryption.
+</Callout>

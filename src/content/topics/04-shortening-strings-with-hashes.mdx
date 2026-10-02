@@ -1,0 +1,210 @@
+---
+title: "Shortening Strings with Hashes"
+category: "practical-hashing"
+order: 1
+summary: "Turn a string of any length into a short, fixed-length, deterministic key — the right algorithm, encoding, and truncation for a length limit, and the collision math that tells you whether it's safe."
+tags: ["shortening", "truncation", "base64url", "hex", "base62", "collision", "birthday-paradox", "cache-key", "unique-index", "interview"]
+---
+
+import Callout from "../../components/Callout.astro";
+import FigurePanel from "../../components/FigurePanel.astro";
+import StringShortenerDiagram from "../../components/diagrams/StringShortenerDiagram.tsx";
+
+You have a string that's too long for where it needs to go — a 2,000-character URL that has to be a unique key in a `VARCHAR(40)` column, a cache key over memcached's 250-byte limit, a filename over the filesystem's 255-byte limit, an identifier that has to fit in a Kubernetes label (63 chars). You need a **short, fixed-length stand-in** that is always the same for the same input and almost never the same for different inputs.
+
+That is exactly what a hash function is: `hash(anything) → fixed-size fingerprint`. The whole recipe is three decisions:
+
+1. **Which hash** — determines how many bits you get and whether an attacker could force a collision.
+2. **Which encoding** — turns raw bytes into printable characters. Determines characters per bit.
+3. **How much to keep** — truncate to fit the limit. Determines the collision probability.
+
+<FigurePanel number={1} caption="Hash → encode → truncate, live in your browser">
+  <StringShortenerDiagram client:visible />
+</FigurePanel>
+
+---
+
+## The interview answer, in one line
+
+> "Take SHA-256 of the UTF-8 bytes, keep the first 16 bytes (128 bits), and Base64url-encode it — that's 22 characters. Or hex-encode it for 32 characters if the target is case-insensitive. 128 bits means the collision odds are negligible even at billions of keys, and SHA-256 is available in every language and database."
+
+Then show you know the trade-offs: **it's one-way** (if you need the original back, store it alongside the hash), **collisions are possible in principle** (so store the original and compare on lookup if correctness matters), and **canonicalize first** (decide on encoding, case, whitespace before hashing).
+
+### Code you can paste
+
+```python
+import hashlib, base64
+
+def short_key(s: str) -> str:
+    digest = hashlib.sha256(s.encode("utf-8")).digest()          # 32 bytes
+    return base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode()  # 22 chars
+
+def short_key_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]   # 32 chars, 128 bits
+
+# BLAKE2 lets you ask for the output size directly — no truncation step:
+hashlib.blake2b(s.encode("utf-8"), digest_size=16).hexdigest()  # 32 chars
+```
+
+```javascript
+// Node.js
+import { createHash } from "node:crypto";
+const shortKey = (s) => createHash("sha256").update(s, "utf8").digest("hex").slice(0, 32);
+const shortKey64 = (s) => createHash("sha256").update(s, "utf8").digest().subarray(0, 16).toString("base64url"); // 22 chars
+
+// Browser (async — Web Crypto)
+async function shortKeyBrowser(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf).slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+```
+
+```java
+import java.security.MessageDigest;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+
+static String shortKey(String s) throws Exception {
+    byte[] d = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(Arrays.copyOf(d, 16)); // 22 chars
+    // or: HexFormat.of().formatHex(d).substring(0, 32);  // Java 17+, 32 chars
+}
+```
+
+```go
+import ("crypto/sha256"; "encoding/base64"; "encoding/hex")
+
+func ShortKey(s string) string {
+    sum := sha256.Sum256([]byte(s))
+    return base64.RawURLEncoding.EncodeToString(sum[:16]) // 22 chars
+    // or: hex.EncodeToString(sum[:16])                     // 32 chars
+}
+```
+
+```sql
+-- PostgreSQL 11+
+SELECT left(encode(sha256(convert_to(url, 'UTF8')), 'hex'), 32) FROM links;
+SELECT md5(url) FROM links;  -- 32 hex chars, fine for a non-adversarial key
+
+-- MySQL 8: index a hash of a long column via a generated column
+ALTER TABLE links
+  ADD COLUMN url_hash CHAR(32) AS (LEFT(SHA2(url, 256), 32)) STORED,
+  ADD UNIQUE KEY uq_links_url_hash (url_hash);
+```
+
+```bash
+printf "%s" "$LONG_STRING" | shasum -a 256 | cut -c1-32   # printf, not echo (echo adds a newline); sha256sum on Linux
+```
+
+---
+
+## Decision 1: Which hash?
+
+| Need | Use | Why |
+| --- | --- | --- |
+| Default / anything user-controlled | **SHA-256** (truncated) | Secure, universal, fast enough. Truncating SHA-2 is a standard, safe practice. |
+| Want to pick the output length directly | **BLAKE2b** (`digest_size=N`) / BLAKE3 | Length is a parameter, not a truncation. Faster than MD5. |
+| Non-adversarial, legacy compatibility | MD5 (32 hex) | Fine as a fingerprint when nobody is *trying* to collide. Broken for anything an attacker controls. |
+| Huge volumes, speed matters, internal only | xxHash128 / MurmurHash3-128 | Several times faster; no security guarantees at all. |
+
+<Callout variant="warning" title="Don't use your language's built-in hash()">
+Python's `hash("abc")` is **randomized per process** (since 3.3, via `PYTHONHASHSEED`) — restart the app and every key changes. Java's `String.hashCode()` is stable but only **32 bits**, so `"Aa"` and `"BB"` already collide and you'll see collisions in a few tens of thousands of keys. JavaScript has no built-in string hash at all. These exist for in-memory hash tables, never for stored or shared keys. Use `hashlib`, `MessageDigest`, `crypto`.
+</Callout>
+
+## Decision 2: Which encoding?
+
+A hash produces raw **bytes**. To put them in a string column, URL, or filename you encode them. The encoding determines how many characters each byte costs:
+
+| Encoding | Alphabet | Chars per byte | 16 bytes (128 bits) | 20 bytes (160) | 32 bytes (256) |
+| --- | --- | --- | --- | --- | --- |
+| Hex | `0-9a-f` | 2 | 32 | **40** | 64 |
+| Base32 (RFC 4648) | `a-z2-7` | 1.6 | 26 | 32 | 52 |
+| Base62 | `0-9A-Za-z` | ≈1.34 | 22 | 27 | 43 |
+| Base64url | `A-Za-z0-9-_` | ≈1.33 | 22 | 27 | 43 |
+
+Which explains the classic trap: **SHA-1 in hex is exactly 40 characters**, so "under 40" rules out the most obvious answer. SHA-256 in hex is 64 and Base64url is 43 — both too long un-truncated. You must either truncate or use a denser encoding (or both).
+
+<Callout variant="warning" title="Case-insensitive targets break Base64 and Base62">
+Base64 and Base62 rely on `A` ≠ `a`. If the destination is case-insensitive — MySQL's default collations, Windows/macOS filenames, DNS names, email local parts in many systems — two different hashes like `aB3x…` and `Ab3X…` are treated as equal, silently multiplying collisions. Use **hex** or **Base32** there.
+</Callout>
+
+### Pick the alphabet for the destination
+
+- **URL path or query** → Base64**url** (uses `-` and `_`, not `+` and `/`) with padding (`=`) stripped, or hex.
+- **Filename** → hex or Base32 (case-insensitive filesystems, `/` is forbidden).
+- **DNS label / Kubernetes name** → lowercase hex or lowercase Base32, max 63 chars.
+- **Database key** → hex in a `CHAR(n)`, or even better the raw bytes in a `BINARY(16)` / `bytea` column (half the size of hex, no encoding at all).
+- **Must be alphanumeric only** → hex, or Base62.
+
+## Decision 3: How much to keep? (The collision math)
+
+Truncating SHA-256 to *b* bits is just as good as a hash that was *designed* with *b* bits. The question is how many bits you need, and the answer comes from the **birthday paradox**: with 23 people in a room, there's a 50% chance two share a birthday, even though there are 365 days. Collisions show up much sooner than intuition says — at roughly the **square root** of the number of possible values.
+
+<Callout variant="definition" title="Birthday bound">
+For *n* items hashed into *b* bits, the probability of at least one collision is approximately **p ≈ n² / 2^(b+1)**. A 50% chance is reached around **n ≈ 1.18 × 2^(b/2)**. So a *b*-bit hash gives you only *b/2* bits of collision resistance.
+</Callout>
+
+| Bits kept | Hex chars | Base64url chars | 50% collision at | P(collision), 1 million keys | P(collision), 1 billion keys |
+| --- | --- | --- | --- | --- | --- |
+| 32 | 8 | 6 | ~77,000 keys | ≈ 100% | ≈ 100% |
+| 64 | 16 | 11 | ~5 billion | 3 × 10⁻⁸ | **2.7%** |
+| 96 | 24 | 16 | ~3 × 10¹⁴ | 6 × 10⁻¹⁸ | 6 × 10⁻¹² |
+| 128 | 32 | 22 | ~2 × 10¹⁹ | 1.5 × 10⁻²⁷ | 1.5 × 10⁻²¹ |
+| 160 | 40 | 27 | ~1.4 × 10²⁴ | ≈ 0 | 3 × 10⁻³¹ |
+
+**Rules of thumb:**
+
+- **128 bits** is the standard "will never collide by accident" size (it's what UUIDs use). Under 40 characters in any encoding. This is the default answer.
+- **64 bits** is fine for millions of keys where a collision is merely annoying (a cache miss, a duplicate warning), not for billions or for correctness-critical uniqueness.
+- **32 bits** is only for bucketing/sharding, never identity.
+- If attackers choose the inputs and a collision would hurt you (dedup that drops someone's file, a cache poisoning), use a *cryptographic* hash and keep **at least 128 bits**, ideally more.
+
+---
+
+## Handling collisions anyway
+
+Even when the odds are 10⁻²¹, systems that need *guaranteed* correctness keep the original and verify:
+
+```sql
+CREATE TABLE links (
+  url_hash  BINARY(16)   PRIMARY KEY,   -- first 16 bytes of SHA-256(url)
+  url       TEXT         NOT NULL       -- the original, for verification and for getting it back
+);
+
+-- Lookup: hash to find the row fast, compare the full value to be certain
+SELECT * FROM links
+WHERE url_hash = UNHEX(LEFT(SHA2(:url, 256), 32))
+  AND url = :url;
+```
+
+The hash gives you a short, indexable, fixed-size key; the original column gives you correctness. If an insert ever hits a duplicate `url_hash` with a different `url`, you've found a genuine collision — log it, and fall back (e.g. append a counter and rehash).
+
+## Gotchas
+
+### Canonicalize before hashing
+
+Hashes are exact: `"https://Example.com/a"`, `"https://example.com/a"`, and `"https://example.com/a "` produce three unrelated hashes. Decide what "the same input" means *before* hashing — trim whitespace, lowercase the scheme and host, sort query parameters, normalize Unicode (NFC) — and do it identically everywhere.
+
+### Always specify the byte encoding
+
+Hash functions take bytes, not strings. `"café"` is 5 bytes in UTF-8 and 4 in Latin-1 — different hashes. Always encode explicitly as UTF-8 (`s.encode("utf-8")`, `getBytes(StandardCharsets.UTF_8)`). Java's no-argument `getBytes()` uses the platform default and will bite you across machines.
+
+### Plain truncation is not hashing
+
+`s[:40]` is the tempting non-answer. Long strings tend to share **prefixes** — every URL on your site starts with `https://www.example.com/products/` — so truncation collides constantly. If you want readability, use the **prefix + hash** pattern:
+
+```python
+def readable_key(s: str, limit: int = 40) -> str:
+    h = hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]   # 64 bits is plenty for disambiguation here
+    return s[: limit - 17] + "_" + h                          # 'https://www.example.com/p_3f9a0c...'
+```
+
+This is how ORMs generate long constraint/index names (Postgres silently truncates identifiers at 63 bytes) and how tools like Helm and Terraform shorten resource names.
+
+### Hashing is not a URL shortener
+
+A URL shortener (bit.ly style) usually wants the *shortest possible* code — 7 characters — which is only ~42 bits of Base62, far too few to hash randomly. Those systems instead use a **counter** (or ID generator) encoded in Base62 and store the mapping. Hashing fits when you need determinism without coordination: the same input always produces the same key on any machine, with no database round-trip.
+
+<Callout variant="example" title="Where this shows up">
+**Cache keys:** `cache_key = "search:" + sha256(json.dumps(params, sort_keys=True))[:32]` — memcached rejects keys over 250 bytes, and long Redis keys waste memory. **Unique index on long text:** MySQL can't fully index a long `TEXT` column; a `BINARY(16)` hash column with a unique index can. **Idempotency keys:** hash the canonicalized request body so retries map to the same key. **Filenames:** `thumbnails/{sha256(source_url)[:32]}.jpg`. **Dedup:** detect identical documents by hash instead of comparing full text.
+</Callout>
